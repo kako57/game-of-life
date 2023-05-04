@@ -1,11 +1,15 @@
-#include <windows.h>
+#include <random>
 #include <stdint.h>
 #include <stdlib.h>
 #include <time.h>
-#include <random>
+#include <windows.h>
 
 #define SCREEN_WIDTH 1920
 #define SCREEN_HEIGHT 1080
+
+#define SCALE 7
+
+#define comment 0
 
 // pixel value looks like this: 0x__RRGGBB
 #define WHITE 0x00ffffff
@@ -34,25 +38,25 @@ global_variable bool initialized = 0;
 
 // make it windowed fullscreen
 // in case you cry about not being able to switch windows
-void set_full_screen(int width, int height)
-{
+void set_full_screen(int width, int height) {
   DEVMODE dmSettings;
 
-  memset(&dmSettings,0,sizeof(dmSettings));
+  memset(&dmSettings, 0, sizeof(dmSettings));
 
   // get current display settings
-  if (!EnumDisplaySettings(NULL,ENUM_CURRENT_SETTINGS,&dmSettings)) {
-    MessageBox(NULL, "I can't get the current display settings :(", "Error", MB_OK);
+  if (!EnumDisplaySettings(NULL, ENUM_CURRENT_SETTINGS, &dmSettings)) {
+    MessageBox(NULL, "I can't get the current display settings :(", "Error",
+               MB_OK);
     return;
   }
 
-  dmSettings.dmPelsWidth  = width;
-  dmSettings.dmPelsHeight  = height;
+  dmSettings.dmPelsWidth = width;
+  dmSettings.dmPelsHeight = height;
 
   // flags saying what fields we're changing in the display settings
   dmSettings.dmFields = DM_PELSWIDTH | DM_PELSHEIGHT;
-  
-  int result = ChangeDisplaySettings(&dmSettings, CDS_FULLSCREEN);  
+
+  int result = ChangeDisplaySettings(&dmSettings, CDS_FULLSCREEN);
 
   if (result != DISP_CHANGE_SUCCESSFUL) {
     MessageBox(NULL, "can't change the display settings :(", "Error", MB_OK);
@@ -79,8 +83,8 @@ uint32_t get_alive_neighbours(int row, int col) {
   uint32_t count = 0;
 
   for (int i = 0; i < 8; i++) {
-    int nr = dr[i] + row;
-    int nc = dc[i] + col;
+    int nr = dr[i] * SCALE + row;
+    int nc = dc[i] * SCALE + col;
 
     if (nr < 0 || nr >= bitmap_height)
       continue;
@@ -93,8 +97,7 @@ uint32_t get_alive_neighbours(int row, int col) {
   return count;
 }
 
-uint32_t get_next_state(int row, int col)
-{
+uint32_t get_next_state(int row, int col) {
   uint32_t alive = get_current_state(row, col);
   uint32_t num_neighbours = get_alive_neighbours(row, col);
 
@@ -102,19 +105,18 @@ uint32_t get_next_state(int row, int col)
   if (!alive)
     return (num_neighbours == 3) ? WHITE : BLACK;
 
-  // if alive, stay alive iff you have 2 or 3 neighbours => survive to next generation
-  switch(num_neighbours) {
-    case 2:
-    case 3:
-      return WHITE;
-    default:
-      // less than 2 is underpopulation, more than 3 is overpopulation
-      return BLACK;
+  // if alive, stay alive iff you have 2 or 3 neighbours => survival
+  switch (num_neighbours) {
+  case 2:
+  case 3:
+    return WHITE;
+  default:
+    // less than 2 is underpopulation, more than 3 is overpopulation
+    return BLACK;
   }
 }
 
-internal void initialize_screen()
-{
+internal void initialize_screen() {
   int pitch = bitmap_width * bytes_per_pixel;
   uint8_t *row = (uint8_t *)bitmap_memory[active_buf_idx];
 
@@ -126,15 +128,29 @@ internal void initialize_screen()
     uint32_t *pixel = (uint32_t *)row;
     for (int x = 0; x < bitmap_width; x++) {
       // *pixel = (mt() % 2) ? WHITE : BLACK;
-      *pixel = (mt() % 2) * WHITE;
+      if (y % SCALE == 0) {
+        if (x % SCALE == 0) {
+          *pixel = (mt() % 2) * WHITE;
+        } else {
+          *pixel = *(pixel - 1);
+        }
+      } else {
+        #ifdef comment
+        if (x % SCALE == 0) {
+          *pixel = *(pixel - bitmap_width);
+        } else {
+          *pixel = *(pixel - 1);
+        }
+        #endif
+        *pixel = *(pixel - (x % SCALE == 0 ? bitmap_width : 1));
+      }
       pixel++;
     }
     row += pitch;
   }
 }
 
-internal void render_screen()
-{
+internal void render_screen() {
   if (!initialized) {
     initialize_screen();
     initialized = true;
@@ -156,8 +172,7 @@ internal void render_screen()
   }
 }
 
-internal void ResizeDBISection(int width, int height)
-{
+internal void ResizeDBISection(int width, int height) {
   if (bitmap_memory[0]) {
     VirtualFree(bitmap_memory[0], 0, MEM_RELEASE);
     bitmap_memory[0] = NULL;
@@ -179,28 +194,26 @@ internal void ResizeDBISection(int width, int height)
 
   int bitmap_memory_size = bitmap_width * bitmap_height * bytes_per_pixel;
   bitmap_memory[0] =
-    VirtualAlloc(0, bitmap_memory_size, MEM_COMMIT, PAGE_READWRITE);
+      VirtualAlloc(0, bitmap_memory_size, MEM_COMMIT, PAGE_READWRITE);
   bitmap_memory[1] =
-    VirtualAlloc(0, bitmap_memory_size, MEM_COMMIT, PAGE_READWRITE);
+      VirtualAlloc(0, bitmap_memory_size, MEM_COMMIT, PAGE_READWRITE);
 
   render_screen();
 }
 
 internal void UpdateTerminalWindow(HDC device_context, RECT window_rect, LONG x,
-                                   LONG y, LONG width, LONG height)
-{
+                                   LONG y, LONG width, LONG height) {
   int window_width = window_rect.right - window_rect.left;
   int window_height = window_rect.bottom - window_rect.top;
 
   // slap the bitmap on the screen
   StretchDIBits(device_context, 0, 0, bitmap_width, bitmap_height, 0, 0,
-                window_width, window_height, bitmap_memory[active_buf_idx], &bitmap_info,
-                DIB_RGB_COLORS, SRCCOPY);
+                window_width, window_height, bitmap_memory[active_buf_idx],
+                &bitmap_info, DIB_RGB_COLORS, SRCCOPY);
 }
 
 LRESULT CALLBACK MainWindowCallback(HWND window, UINT message, WPARAM wParam,
-                                    LPARAM lParam)
-{
+                                    LPARAM lParam) {
   LRESULT result = 0;
   switch (message) {
   case WM_SIZE: {
@@ -241,8 +254,7 @@ LRESULT CALLBACK MainWindowCallback(HWND window, UINT message, WPARAM wParam,
   return result;
 }
 
-void MessageLoop(HWND window)
-{
+void MessageLoop(HWND window) {
   running = true;
 
   // message loop
@@ -271,8 +283,7 @@ void MessageLoop(HWND window)
 }
 
 int CALLBACK WinMain(HINSTANCE Instance, HINSTANCE prevInstance,
-                     LPSTR lpCmdLine, int nCmdShow)
-{
+                     LPSTR lpCmdLine, int nCmdShow) {
   WNDCLASS window_class = {};
   window_class.style = CS_HREDRAW | CS_VREDRAW;
   window_class.lpfnWndProc = MainWindowCallback;
@@ -288,8 +299,8 @@ int CALLBACK WinMain(HINSTANCE Instance, HINSTANCE prevInstance,
       0, window_class.lpszClassName, "Weee",
       // windowed fullscreen so you don't cry as much by the cursor being goners
       WS_POPUP | WS_CLIPSIBLINGS | WS_CLIPCHILDREN | WS_VISIBLE,
-      CW_USEDEFAULT, CW_USEDEFAULT,
-      SCREEN_WIDTH, SCREEN_HEIGHT, 0, 0, Instance, 0);
+      CW_USEDEFAULT, CW_USEDEFAULT, SCREEN_WIDTH, SCREEN_HEIGHT, 0, 0,
+      Instance, 0);
     if (window_handle) {
       MessageLoop(window_handle);
     } else {
